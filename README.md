@@ -4,5 +4,5 @@ This is a Magento that integrates Bizum PSP with Magento 2.
 
 ## Composer install
 ```
-    composer require catgento/magento-2-bizum
+    composer require rbouma/magento-2-bizum
 ```
