@@ -2,13 +2,13 @@
 
 namespace Catgento\Bizum\Block;
 
-use Magento\Framework\View\Element\Template;
-use Magento\Framework\View\Element\Template\Context;
-use Magento\Framework\App\Config\ScopeConfigInterface;
-use Magento\Store\Model\ScopeInterface;
 use Catgento\Bizum\Model\BizumApi;
 use Catgento\Bizum\Model\BizumFactory;
 use Catgento\Bizum\Model\ConfigInterface;
+use Magento\Framework\App\Config\ScopeConfigInterface;
+use Magento\Framework\View\Element\Template;
+use Magento\Framework\View\Element\Template\Context;
+use Magento\Store\Model\ScopeInterface;
 
 /**
  * Class Redirect
@@ -40,11 +40,12 @@ class Redirect extends Template
      * @param array $data
      */
     public function __construct(
-        Context $context,
+        Context              $context,
         ScopeConfigInterface $scopeConfig,
-        BizumFactory $bizumFactory,
-        array $data = []
-    ) {
+        BizumFactory         $bizumFactory,
+        array                $data = []
+    )
+    {
         $this->scopeConfig = $scopeConfig;
         $this->bizumFactory = $bizumFactory;
         parent::__construct($context, $data);
@@ -69,6 +70,15 @@ class Redirect extends Template
     }
 
     /**
+     * @return string
+     */
+    public function getParameters()
+    {
+        $bizumObj = $this->getBizumObject();
+        return $bizumObj->createMerchantParameters();
+    }
+
+    /**
      * @return BizumApi
      */
     private function getBizumObject()
@@ -77,15 +87,6 @@ class Redirect extends Template
             $this->bizumObj = $this->bizumFactory->createBizumObject();
         }
         return $this->bizumObj;
-    }
-
-    /**
-     * @return string
-     */
-    public function getParameters()
-    {
-        $bizumObj = $this->getBizumObject();
-        return $bizumObj->createMerchantParameters();
     }
 
     /**

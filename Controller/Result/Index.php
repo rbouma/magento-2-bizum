@@ -2,30 +2,30 @@
 
 namespace Catgento\Bizum\Controller\Result;
 
-use Magento\Framework\App\Action\Action;
-use Magento\Framework\App\Action\HttpPostActionInterface as HttpPostActionInterface;
-use Magento\Framework\App\CsrfAwareActionInterface;
-use Magento\Framework\App\RequestInterface;
-use Magento\Framework\App\Request\InvalidRequestException;
-use Magento\Framework\App\Action\Context;
-use Magento\Sales\Model\Service\InvoiceService;
-use Magento\Sales\Model\Order\Invoice;
-use Magento\Sales\Model\Order\Email\Sender\InvoiceSender;
-use Magento\Framework\Controller\ResultFactory;
-use Magento\Framework\Exception\LocalizedException;
-use Magento\Framework\App\Config\ScopeConfigInterface;
-use Magento\Store\Model\ScopeInterface;
-use Magento\Sales\Api\OrderRepositoryInterface;
-use Magento\Sales\Api\Data\OrderInterface;
-use Magento\Sales\Model\Order;
-use Magento\Sales\Model\Order\Email\Sender\OrderSender;
-use Magento\Framework\DB\Transaction;
-use Magento\Framework\DB\TransactionFactory;
 use Catgento\Bizum\Helper\Helper;
 use Catgento\Bizum\Logger\Logger;
 use Catgento\Bizum\Model\BizumApi;
 use Catgento\Bizum\Model\ConfigInterface;
 use Catgento\Bizum\Model\Currency;
+use Magento\Framework\App\Action\Action;
+use Magento\Framework\App\Action\Context;
+use Magento\Framework\App\Action\HttpPostActionInterface as HttpPostActionInterface;
+use Magento\Framework\App\Config\ScopeConfigInterface;
+use Magento\Framework\App\CsrfAwareActionInterface;
+use Magento\Framework\App\Request\InvalidRequestException;
+use Magento\Framework\App\RequestInterface;
+use Magento\Framework\Controller\ResultFactory;
+use Magento\Framework\DB\Transaction;
+use Magento\Framework\DB\TransactionFactory;
+use Magento\Framework\Exception\LocalizedException;
+use Magento\Sales\Api\Data\OrderInterface;
+use Magento\Sales\Api\OrderRepositoryInterface;
+use Magento\Sales\Model\Order;
+use Magento\Sales\Model\Order\Email\Sender\InvoiceSender;
+use Magento\Sales\Model\Order\Email\Sender\OrderSender;
+use Magento\Sales\Model\Order\Invoice;
+use Magento\Sales\Model\Service\InvoiceService;
+use Magento\Store\Model\ScopeInterface;
 
 /**
  * Class Index
@@ -128,19 +128,20 @@ class Index extends Action implements CsrfAwareActionInterface, HttpPostActionIn
      * @param Helper $helper
      * @param Logger $logger
      */
-	public function __construct(
-		Context $context,
-        InvoiceService $invoiceService,
-        InvoiceSender $invoiceSender,
-        ResultFactory $resultRedirectFactory,
-        TransactionFactory $transactionFactory,
-        ScopeConfigInterface $scopeConfig,
+    public function __construct(
+        Context                  $context,
+        InvoiceService           $invoiceService,
+        InvoiceSender            $invoiceSender,
+        ResultFactory            $resultRedirectFactory,
+        TransactionFactory       $transactionFactory,
+        ScopeConfigInterface     $scopeConfig,
         OrderRepositoryInterface $orderRepository,
-        OrderSender $orderSender,
-        Currency $currencyList,
-        Helper $helper,
-        Logger $logger
-    ) {
+        OrderSender              $orderSender,
+        Currency                 $currencyList,
+        Helper                   $helper,
+        Logger                   $logger
+    )
+    {
         parent::__construct($context);
         $this->invoiceService = $invoiceService;
         $this->invoiceSender = $invoiceSender;
@@ -168,16 +169,6 @@ class Index extends Action implements CsrfAwareActionInterface, HttpPostActionIn
         }
     }
 
-    public function createCsrfValidationException(RequestInterface $request): ?InvalidRequestException
-    {
-        return null;
-    }
-
-    public function validateForCsrf(RequestInterface $request): ?bool
-    {
-        return true;
-    }
-
     protected function process()
     {
         try {
@@ -189,13 +180,86 @@ class Index extends Action implements CsrfAwareActionInterface, HttpPostActionIn
                 $this->processOrder();
                 $this->_registerPaymentCapture();
             } else {
-                $errorMessage = $this->helper->messageResponse($responseCode)." ".__("(response:%1)",$responseCode);
+                $errorMessage = $this->helper->messageResponse($responseCode) . " " . __("(response:%1)", $responseCode);
                 $this->helper->cancelOrder($this->getOrder(), $errorMessage);
             }
 
         } catch (\Exception $e) {
             $this->logger->critical($e);
         }
+    }
+
+    /**
+     * @throws LocalizedException
+     */
+    private function validate()
+    {
+        $data = $this->getRequest()->getParam("Ds_MerchantParameters");
+        $signatureResponse = $this->getRequest()->getParam("Ds_Signature");
+
+        if (is_null($data) or is_null($signatureResponse)) {
+            throw new LocalizedException(__('Incorrect response from Bizum.'));
+        }
+
+        $api = $this->getApi();
+        $sha256key = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_KEY256, ScopeInterface::SCOPE_STORE);
+        $signature = $api->createMerchantSignatureNotif($sha256key, $data);
+
+        $orderId = $api->getParameter('Ds_Order');
+        $merchantCode = $api->getParameter('Ds_MerchantCode');
+        $terminal = $api->getParameter('Ds_Terminal');
+        $transaction = $api->getParameter('Ds_TransactionType');
+
+        $merchantCodeMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_COMMERCE_NUM, ScopeInterface::SCOPE_STORE);
+        $terminalMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_TERMINAL, ScopeInterface::SCOPE_STORE);
+        $transactionMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_TRANSACTION_TYPE, ScopeInterface::SCOPE_STORE);
+
+        if ($signature !== $signatureResponse
+            or !isset($orderId)
+            or $transaction != $transactionMagento
+            or $merchantCode != $merchantCodeMagento
+            or intval(strval($terminalMagento)) != intval(strval($terminal))
+        ) {
+            throw new LocalizedException(__('Errors in POST data'));
+        }
+
+        $this->amount = $api->getParameter('Ds_Amount');
+        $orderId = $api->getParameter('Ds_Order');
+        $order = $this->getOrder($orderId);
+
+        $transaction_amount = number_format($order->getBaseGrandTotal(), 2, '', '');
+        $amountOrder = (float)$transaction_amount;
+        if ($amountOrder != $this->amount) {
+            throw new LocalizedException(__("Amount is diferent"));
+        }
+
+    }
+
+    /**
+     * @return BizumApi
+     */
+    private function getApi()
+    {
+        if (is_null($this->api)) {
+            $data = $this->getRequest()->getParam("Ds_MerchantParameters");
+            $this->api = new BizumApi();
+            $this->api->decodeMerchantParameters($data);
+        }
+        return $this->api;
+    }
+
+    /**
+     * @return OrderInterface
+     * @throws LocalizedException
+     */
+    private function getOrder()
+    {
+        if (is_null($this->order)) {
+            $api = $this->getApi();
+            $orderId = $api->getParameter('Ds_Order');
+            $this->order = $this->helper->getOrderByIncrementId($orderId);
+        }
+        return $this->order;
     }
 
     /**
@@ -248,7 +312,7 @@ class Index extends Action implements CsrfAwareActionInterface, HttpPostActionIn
         $payment->setIsTransactionClosed(1);
 
         $payment->registerCaptureNotification(
-            $this->amount/100,
+            $this->amount / 100,
             true
         );
 
@@ -262,77 +326,14 @@ class Index extends Action implements CsrfAwareActionInterface, HttpPostActionIn
         }
     }
 
-    /**
-     * @return OrderInterface
-     * @throws LocalizedException
-     */
-    private function getOrder()
+    public function createCsrfValidationException(RequestInterface $request): ?InvalidRequestException
     {
-        if (is_null($this->order)) {
-            $api = $this->getApi();
-            $orderId = $api->getParameter('Ds_Order');
-            $this->order = $this->helper->getOrderByIncrementId($orderId);
-        }
-        return $this->order;
+        return null;
     }
 
-    /**
-     * @return BizumApi
-     */
-    private function getApi()
+    public function validateForCsrf(RequestInterface $request): ?bool
     {
-        if (is_null($this->api)) {
-            $data = $this->getRequest()->getParam("Ds_MerchantParameters");
-            $this->api = new BizumApi();
-            $this->api->decodeMerchantParameters($data);
-        }
-        return $this->api;
-    }
-
-    /**
-     * @throws LocalizedException
-     */
-    private function validate()
-    {
-        $data = $this->getRequest()->getParam("Ds_MerchantParameters");
-        $signatureResponse = $this->getRequest()->getParam("Ds_Signature");
-
-        if (is_null($data) or is_null($signatureResponse)) {
-            throw new LocalizedException(__('Incorrect response from Bizum.'));
-        }
-
-        $api = $this->getApi();
-        $sha256key = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_KEY256, ScopeInterface::SCOPE_STORE);
-        $signature = $api->createMerchantSignatureNotif($sha256key, $data);
-
-        $orderId = $api->getParameter('Ds_Order');
-        $merchantCode = $api->getParameter('Ds_MerchantCode');
-        $terminal = $api->getParameter('Ds_Terminal');
-        $transaction = $api->getParameter('Ds_TransactionType');
-
-        $merchantCodeMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_COMMERCE_NUM, ScopeInterface::SCOPE_STORE);
-        $terminalMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_TERMINAL, ScopeInterface::SCOPE_STORE);
-        $transactionMagento = $this->scopeConfig->getValue(ConfigInterface::XML_PATH_TRANSACTION_TYPE, ScopeInterface::SCOPE_STORE);
-
-        if ($signature !== $signatureResponse
-            or !isset($orderId)
-            or $transaction != $transactionMagento
-            or $merchantCode != $merchantCodeMagento
-            or intval(strval($terminalMagento)) != intval(strval($terminal))
-        ) {
-            throw new LocalizedException(__('Errors in POST data'));
-        }
-
-        $this->amount = $api->getParameter('Ds_Amount');
-        $orderId = $api->getParameter('Ds_Order');
-        $order = $this->getOrder($orderId);
-
-        $transaction_amount = number_format($order->getBaseGrandTotal(), 2, '', '');
-        $amountOrder = (float)$transaction_amount;
-        if ($amountOrder != $this->amount) {
-            throw new LocalizedException(__("Amount is diferent"));
-        }
-
+        return true;
     }
 
 }
